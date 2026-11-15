@@ -5,29 +5,28 @@ No Gold subscription required. Standard email/password login.
 
 API: POST /api/v2/* via JSON-RPC (auth block in body)
      DELETE /api/v3/user/{id}/* via REST (x-crono-session header)
+
+Remote server: streamable-HTTP transport, gated by GitHub OAuth or a
+secret URL path — see auth.py and the README for configuration.
 """
 import os, json, logging, sys, time, uuid
 from datetime import date as _date_cls, datetime, timedelta
 from typing import Optional
 import httpx
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
-# ── config (reads from ~/.hermes/.env.cronometer) ──────────────────
-_env_path = os.path.expanduser("~/.hermes/.env.cronometer")
-if os.path.exists(_env_path):
-    for _line in open(_env_path):
-        _line = _line.strip()
-        if "=" in _line and not _line.startswith("#"):
-            _k, _v = _line.split("=", 1)
-            os.environ.setdefault(_k, _v)
+from auth import build_auth
 
 BASE_URL = "https://mobile.cronometer.com"
 _DEVICE = "Android 14 (SDK 34), Google Pixel 6 Pro"
 
+_auth, _middleware, _mcp_path, _auth_mode = build_auth()
+
 mcp = FastMCP("cronometer", instructions="""Cronometer nutrition via mobile API (no Gold needed).
 Tools: search_foods, get_food_details, get_food_log, get_daily_nutrition,
 add_food_entry, remove_food_entry, mark_day_complete, copy_day,
-get_macro_targets, get_fasting_history, get_fasting_stats.""")
+get_macro_targets, get_fasting_history, get_fasting_stats.""",
+    auth=_auth, middleware=_middleware)
 
 http = httpx.Client(timeout=30)
 log = logging.getLogger("cronometer")
@@ -42,7 +41,7 @@ def _get_creds():
     user = os.environ.get("CRONOMETER_USERNAME") or os.environ.get("CRONOMETER_EMAIL")
     pw = os.environ.get("CRONOMETER_PASSWORD")
     if not user or not pw:
-        raise RuntimeError("Set CRONOMETER_USERNAME and CRONOMETER_PASSWORD in ~/.hermes/.env.cronometer")
+        raise RuntimeError("Set CRONOMETER_USERNAME and CRONOMETER_PASSWORD environment variables")
     return user, pw
 
 
@@ -508,5 +507,13 @@ def get_fasting_stats() -> str:
         return _err(e)
 
 
+def main():
+    logging.basicConfig(level=logging.INFO)
+    port = int(os.environ.get("PORT", 8000))
+    host = os.environ.get("HOST", "0.0.0.0")
+    log.info(f"Starting cronometer MCP server on {host}:{port}{_mcp_path} — auth: {_auth_mode}")
+    mcp.run(transport="http", host=host, port=port, path=_mcp_path)
+
+
 if __name__ == "__main__":
-    mcp.run()
+    main()
